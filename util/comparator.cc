@@ -10,6 +10,7 @@
 #include <type_traits>
 
 #include "leveldb/slice.h"
+
 #include "util/logging.h"
 #include "util/no_destructor.h"
 
@@ -27,7 +28,7 @@ class BytewiseComparatorImpl : public Comparator {
   int Compare(const Slice& a, const Slice& b) const override {
     return a.compare(b);
   }
-
+  // 如果start < limit,就把start修改为*start和limit的共同前缀后面多一个字符加1。
   void FindShortestSeparator(std::string* start,
                              const Slice& limit) const override {
     // Find length of common prefix
@@ -38,6 +39,7 @@ class BytewiseComparatorImpl : public Comparator {
       diff_index++;
     }
 
+    // 上一个data block的key是下一个data block的子串，则不处理
     if (diff_index >= min_length) {
       // Do not shorten if one string is a prefix of the other
     } else {

@@ -31,7 +31,7 @@ class BlockBuilder {
   // Finish building the block and return a slice that refers to the
   // block contents.  The returned slice will remain valid for the
   // lifetime of this builder or until Reset() is called.
-  Slice Finish();
+  Slice Finish(); // flush在循环中进行，所以最后一次需要finish
 
   // Returns an estimate of the current (uncompressed) size of the block
   // we are building.
@@ -42,11 +42,11 @@ class BlockBuilder {
 
  private:
   const Options* options_;
-  std::string buffer_;              // Destination buffer
+  std::string buffer_;              // Destination buffer 序列化之后的数据
   std::vector<uint32_t> restarts_;  // Restart points
-  int counter_;                     // Number of entries emitted since restart
+  int counter_;                     // Number of entries emitted since restart 记录现在的重启点有多少数据
   bool finished_;                   // Has Finish() been called?
-  std::string last_key_;
+  std::string last_key_;            // 记录上一次的key
 };
 
 }  // namespace leveldb

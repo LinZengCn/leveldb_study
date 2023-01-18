@@ -293,23 +293,24 @@ class PosixWritableFile final : public WritableFile {
   Status Append(const Slice& data) override {
     size_t write_size = data.size();
     const char* write_data = data.data();
-
+    // 先尽可能把数据写入到buffer
     // Fit as much as possible into buffer.
     size_t copy_size = std::min(write_size, kWritableFileBufferSize - pos_);
     std::memcpy(buf_ + pos_, write_data, copy_size);
     write_data += copy_size;
     write_size -= copy_size;
     pos_ += copy_size;
+    // 如果全部写完就直接返回
     if (write_size == 0) {
       return Status::OK();
     }
-
+    // 如果buffer装不下，flush到磁盘
     // Can't fit in buffer, so need to do at least one write.
     Status status = FlushBuffer();
     if (!status.ok()) {
       return status;
     }
-
+    // 刷盘之后，检查一下如果能写入，尽可能写入buffer，如果写不进去，需要同步刷盘
     // Small writes go to buffer, large writes are written directly.
     if (write_size < kWritableFileBufferSize) {
       std::memcpy(buf_, write_data, write_size);

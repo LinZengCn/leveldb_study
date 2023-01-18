@@ -18,6 +18,7 @@ Arena::~Arena() {
 }
 
 char* Arena::AllocateFallback(size_t bytes) {
+  // 大于剩余字节数，且大于1/4 kBlockSize，直接分配所需的bytes_size，剩余的alloc_bytes_remaining_不变（也就是不浪费）
   if (bytes > kBlockSize / 4) {
     // Object is more than a quarter of our block size.  Allocate it separately
     // to avoid wasting too much space in leftover bytes.
@@ -25,7 +26,7 @@ char* Arena::AllocateFallback(size_t bytes) {
     return result;
   }
 
-  // We waste the remaining space in the current block.
+  // We waste the remaining space in the current block.（这里就浪费了，但是浪费的内存大小是 < kBlockSize / 4）
   alloc_ptr_ = AllocateNewBlock(kBlockSize);
   alloc_bytes_remaining_ = kBlockSize;
 
@@ -34,11 +35,12 @@ char* Arena::AllocateFallback(size_t bytes) {
   alloc_bytes_remaining_ -= bytes;
   return result;
 }
-
+// 给跳表使用的
 char* Arena::AllocateAligned(size_t bytes) {
   const int align = (sizeof(void*) > 8) ? sizeof(void*) : 8;
   static_assert((align & (align - 1)) == 0,
                 "Pointer size should be a power of 2");
+  // 用来计算是否对齐
   size_t current_mod = reinterpret_cast<uintptr_t>(alloc_ptr_) & (align - 1);
   size_t slop = (current_mod == 0 ? 0 : align - current_mod);
   size_t needed = bytes + slop;

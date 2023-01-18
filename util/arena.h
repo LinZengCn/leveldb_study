@@ -56,7 +56,8 @@ inline char* Arena::Allocate(size_t bytes) {
   // The semantics of what to return are a bit messy if we allow
   // 0-byte allocations, so we disallow them here (we don't need
   // them for our internal use).
-  assert(bytes > 0);
+  assert(bytes > 0); // 很容易运行时core，最好用static_core在编译期core掉
+  // 是否有足够的剩余的字节
   if (bytes <= alloc_bytes_remaining_) {
     char* result = alloc_ptr_;
     alloc_ptr_ += bytes;

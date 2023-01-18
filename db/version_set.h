@@ -178,6 +178,8 @@ class VersionSet {
   // current version.  Will release *mu while actually writing to the file.
   // REQUIRES: *mu is held on entry.
   // REQUIRES: no other thread concurrently calls LogAndApply()
+  // 将edit应用到当前版本，生成新版本，并将当前状态进行持久化
+  // 其中在持久化时候不需要加锁
   Status LogAndApply(VersionEdit* edit, port::Mutex* mu)
       EXCLUSIVE_LOCKS_REQUIRED(mu);
 
@@ -225,30 +227,36 @@ class VersionSet {
 
   // Return the log file number for the log file that is currently
   // being compacted, or zero if there is no such log file.
+  // 返回前一个已经压缩的日志编号，默认0表示没这个文件
   uint64_t PrevLogNumber() const { return prev_log_number_; }
 
   // Pick level and inputs for a new compaction.
   // Returns nullptr if there is no compaction to be done.
   // Otherwise returns a pointer to a heap-allocated object that
   // describes the compaction.  Caller should delete the result.
+  // 选择参与压缩的level和文件
   Compaction* PickCompaction();
 
   // Return a compaction object for compacting the range [begin,end] in
   // the specified level.  Returns nullptr if there is nothing in that
   // level that overlaps the specified range.  Caller should delete
   // the result.
+  // 返回在level层，[begin,end]范围内可以压缩的文件
   Compaction* CompactRange(int level, const InternalKey* begin,
                            const InternalKey* end);
 
   // Return the maximum overlapping data (in bytes) at next level for any
   // file at a level >= 1.
+  // 获取level+1层重叠部分的字节数
   int64_t MaxNextLevelOverlappingBytes();
 
   // Create an iterator that reads over the compaction inputs for "*c".
   // The caller should delete the iterator when no longer needed.
+  // 为参与压缩的文件创建一个迭代器
   Iterator* MakeInputIterator(Compaction* c);
 
   // Returns true iff some level needs a compaction.
+  // 判断是否需要压缩（size or seek触发）
   bool NeedsCompaction() const {
     Version* v = current_;
     return (v->compaction_score_ >= 1) || (v->file_to_compact_ != nullptr);
@@ -256,14 +264,17 @@ class VersionSet {
 
   // Add all files listed in any live version to *live.
   // May also mutate some internal state.
+  // 添加当前所有有效的SST
   void AddLiveFiles(std::set<uint64_t>* live);
 
   // Return the approximate offset in the database of the data for
   // "key" as of version "v".
+  // 获取该key近似的偏移量
   uint64_t ApproximateOffsetOf(Version* v, const InternalKey& key);
 
   // Return a human-readable short (single-line) summary of the number
   // of files per level.  Uses *scratch as backing store.
+  // 每一行一个level文件元数据，主要是文件的大小（human-readable）
   struct LevelSummaryStorage {
     char buffer[100];
   };
@@ -275,10 +286,13 @@ class VersionSet {
   friend class Compaction;
   friend class Version;
 
+  // 复用Manifest文件
   bool ReuseManifest(const std::string& dscname, const std::string& dscbase);
 
+  // 收尾工作，计算下一次需要压缩文件
   void Finalize(Version* v);
 
+  // 获取给定input范围的最大值和最小值
   void GetRange(const std::vector<FileMetaData*>& inputs, InternalKey* smallest,
                 InternalKey* largest);
 
@@ -286,11 +300,14 @@ class VersionSet {
                  const std::vector<FileMetaData*>& inputs2,
                  InternalKey* smallest, InternalKey* largest);
 
+  // 在Level+1层获取所有与当前的文件集合有Key重合的文件。
   void SetupOtherInputs(Compaction* c);
 
   // Save current contents to *log
+  // 将当前的状态写入到日志
   Status WriteSnapshot(log::Writer* log);
 
+  // 将新版本追加到versionset中，并更新current
   void AppendVersion(Version* v);
 
   Env* const env_;
@@ -301,17 +318,19 @@ class VersionSet {
   uint64_t next_file_number_;
   uint64_t manifest_file_number_;
   uint64_t last_sequence_;
-  uint64_t log_number_;
+  uint64_t log_number_; // 当前日志编号
   uint64_t prev_log_number_;  // 0 or backing store for memtable being compacted
 
   // Opened lazily
-  WritableFile* descriptor_file_;
-  log::Writer* descriptor_log_;
+  WritableFile* descriptor_file_; // 用于写manifest文件
+  log::Writer* descriptor_log_; // 其中log格式和wal保持一致
   Version dummy_versions_;  // Head of circular doubly-linked list of versions.
   Version* current_;        // == dummy_versions_.prev_
 
   // Per-level key at which the next compaction at that level should start.
   // Either an empty string, or a valid InternalKey.
+  // 记录每一层在下一次需要压缩的largest key(internalKey)
+  // 该值取自versionedit
   std::string compact_pointer_[config::kNumLevels];
 };
 

@@ -15,8 +15,10 @@ namespace {
 
 typedef Iterator* (*BlockFunction)(void*, const ReadOptions&, const Slice&);
 
+// 由两层iterator实现
 class TwoLevelIterator : public Iterator {
  public:
+  // index_iter是一级迭代器
   TwoLevelIterator(Iterator* index_iter, BlockFunction block_function,
                    void* arg, const ReadOptions& options);
 
@@ -62,7 +64,7 @@ class TwoLevelIterator : public Iterator {
   const ReadOptions options_;
   Status status_;
   IteratorWrapper index_iter_;
-  IteratorWrapper data_iter_;  // May be nullptr
+  IteratorWrapper data_iter_;  // May be nullptr 二级迭代器
   // If data_iter_ is non-null, then "data_block_handle_" holds the
   // "index_value" passed to block_function_ to create the data_iter_.
   std::string data_block_handle_;
@@ -80,9 +82,13 @@ TwoLevelIterator::TwoLevelIterator(Iterator* index_iter,
 TwoLevelIterator::~TwoLevelIterator() = default;
 
 void TwoLevelIterator::Seek(const Slice& target) {
+  // 一级索引找到target从哪个sst文件开始查找
   index_iter_.Seek(target);
+  // 初始化datablock
   InitDataBlock();
+  // 在二级索引中查找数据
   if (data_iter_.iter() != nullptr) data_iter_.Seek(target);
+  // 跳过背后为空的data_block索引
   SkipEmptyDataBlocksForward();
 }
 
@@ -142,19 +148,25 @@ void TwoLevelIterator::SetDataIterator(Iterator* data_iter) {
   if (data_iter_.iter() != nullptr) SaveError(data_iter_.status());
   data_iter_.Set(data_iter);
 }
-
+// 用于初始化内部的data_block
 void TwoLevelIterator::InitDataBlock() {
+  // 索引无效一定无效
   if (!index_iter_.Valid()) {
     SetDataIterator(nullptr);
   } else {
+    // 取出内部的值
+    // LevelFileNumIterator对应的value是文件编号和文件的大小
     Slice handle = index_iter_.value();
+    // 第一次为null，走下面的分支，如果一级索引对应下的二级索引已经构建，那就不需要在构建了
     if (data_iter_.iter() != nullptr &&
         handle.compare(data_block_handle_) == 0) {
       // data_iter_ is already constructed with this iterator, so
       // no need to change anything
     } else {
+      // 回调函数 是table_cache->NewIterator
       Iterator* iter = (*block_function_)(arg_, options_, handle);
       data_block_handle_.assign(handle.data(), handle.size());
+      // 设置二级索引的值
       SetDataIterator(iter);
     }
   }

@@ -66,8 +66,8 @@ class Footer {
   Status DecodeFrom(Slice* input);
 
  private:
-  BlockHandle metaindex_handle_;
-  BlockHandle index_handle_;
+  BlockHandle metaindex_handle_; // 指出metaindex Block中SSTable中的偏移位和大小，由offset+size组成
+  BlockHandle index_handle_; // 指出Index Block在SSTable中的偏移位和大小，同样由offset+size组成。
 };
 
 // kTableMagicNumber was picked by running

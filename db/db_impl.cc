@@ -4,14 +4,6 @@
 
 #include "db/db_impl.h"
 
-#include <algorithm>
-#include <atomic>
-#include <cstdint>
-#include <cstdio>
-#include <set>
-#include <string>
-#include <vector>
-
 #include "db/builder.h"
 #include "db/db_iter.h"
 #include "db/dbformat.h"
@@ -22,11 +14,20 @@
 #include "db/table_cache.h"
 #include "db/version_set.h"
 #include "db/write_batch_internal.h"
+#include <algorithm>
+#include <atomic>
+#include <cstdint>
+#include <cstdio>
+#include <set>
+#include <string>
+#include <vector>
+
 #include "leveldb/db.h"
 #include "leveldb/env.h"
 #include "leveldb/status.h"
 #include "leveldb/table.h"
 #include "leveldb/table_builder.h"
+
 #include "port/port.h"
 #include "table/block.h"
 #include "table/merger.h"
@@ -514,6 +515,7 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
       (unsigned long long)meta.number);
 
   Status s;
+  // 将memtable的内容dump到sst
   {
     mutex_.Unlock();
     s = BuildTable(dbname_, env_, options_, table_cache_, iter, &meta);
@@ -533,8 +535,10 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
     const Slice min_user_key = meta.smallest.user_key();
     const Slice max_user_key = meta.largest.user_key();
     if (base != nullptr) {
+      // 根据最小key和最大key，计算新生成的sst应该属于哪个level
       level = base->PickLevelForMemTableOutput(min_user_key, max_user_key);
     }
+    // 推入VersionEdit类的new_file_成员变量，计入level和filemeta
     edit->AddFile(level, meta.number, meta.file_size, meta.smallest,
                   meta.largest);
   }
@@ -669,6 +673,7 @@ void DBImpl::MaybeScheduleCompaction() {
     // Already got an error; no more changes
   } else if (imm_ == nullptr && manual_compaction_ == nullptr &&
              !versions_->NeedsCompaction()) {
+    // 防止无限递归，会判断需不需要再次Compaction，如果不需要就返回了
     // No work to be done
   } else {
     background_compaction_scheduled_ = true;
@@ -702,6 +707,7 @@ void DBImpl::BackgroundCall() {
 void DBImpl::BackgroundCompaction() {
   mutex_.AssertHeld();
 
+  // 先minor compaction
   if (imm_ != nullptr) {
     CompactMemTable();
     return;
@@ -1227,6 +1233,7 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
     // into mem_.
     {
       mutex_.Unlock();
+      // 先写log
       status = log_->AddRecord(WriteBatchInternal::Contents(write_batch));
       bool sync_error = false;
       if (status.ok() && options.sync) {
@@ -1236,6 +1243,7 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
         }
       }
       if (status.ok()) {
+        // 写log成功写mem_
         status = WriteBatchInternal::InsertInto(write_batch, mem_);
       }
       mutex_.Lock();

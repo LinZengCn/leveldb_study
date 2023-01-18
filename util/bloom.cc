@@ -3,13 +3,17 @@
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
 #include "leveldb/filter_policy.h"
-
 #include "leveldb/slice.h"
+
 #include "util/hash.h"
 
 namespace leveldb {
 
 namespace {
+// 为了尽可能的降低虚概率，最优的hash函数个数可能很高，
+// 比如需要10个hash函数，这势必带来很多的计算，
+// 而且要设计多个不同的hash函数，论文提供了一个思想，
+// 用1个hash函数，多次移位和加法，达到多个hash的结果。
 static uint32_t BloomHash(const Slice& key) {
   return Hash(key.data(), key.size(), 0xbc9f1d34);
 }
@@ -40,11 +44,14 @@ class BloomFilterPolicy : public FilterPolicy {
     dst->resize(init_size + bytes, 0);
     dst->push_back(static_cast<char>(k_));  // Remember # of probes in filter
     char* array = &(*dst)[init_size];
+    // 对于每个key，计算k次，将对应位置的bit设置成1:
     for (int i = 0; i < n; i++) {
       // Use double-hashing to generate a sequence of hash values.
       // See analysis in [Kirsch,Mitzenmacher 2006].
       uint32_t h = BloomHash(keys[i]);
       const uint32_t delta = (h >> 17) | (h << 15);  // Rotate right 17 bits
+      // 内层循环是对每一个key计算k次hash，当然用的是前面提到的论文中的思想。
+      // 使用多次移位和加法，达到多个hash的结果。
       for (size_t j = 0; j < k_; j++) {
         const uint32_t bitpos = h % bits;
         array[bitpos / 8] |= (1 << (bitpos % 8));
@@ -80,8 +87,8 @@ class BloomFilterPolicy : public FilterPolicy {
   }
 
  private:
-  size_t bits_per_key_;
-  size_t k_;
+  size_t bits_per_key_;  // 一个key占据多少位，即位图bit数除以key的个数
+  size_t k_;             // 哈希函数个数
 };
 }  // namespace
 

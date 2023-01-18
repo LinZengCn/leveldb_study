@@ -35,7 +35,7 @@
 #include "util/random.h"
 
 namespace leveldb {
-
+// 跳表是可以实现二分查找的有序链表。
 template <typename Key, class Comparator>
 class SkipList {
  private:
@@ -241,6 +241,8 @@ int SkipList<Key, Comparator>::RandomHeight() {
   // Increase height with probability 1 in kBranching
   static const unsigned int kBranching = 4;
   int height = 1;
+  // 得到一个随机值，如果随机值是 4 的倍数就返回 height，否则 keight 就加 1
+  // 每一层会按照4的倍数减少，出现4层的概率只有出现3层概率的1/4
   while (height < kMaxHeight && rnd_.OneIn(kBranching)) {
     height++;
   }
@@ -254,7 +256,7 @@ bool SkipList<Key, Comparator>::KeyIsAfterNode(const Key& key, Node* n) const {
   // null n is considered infinite
   return (n != nullptr) && (compare_(n->key, key) < 0);
 }
-
+// FindGreaterOrEqual 找到>或者=Key的节点，prev[]中存储的内容是每一层中比key小的数是哪个
 template <typename Key, class Comparator>
 typename SkipList<Key, Comparator>::Node*
 SkipList<Key, Comparator>::FindGreaterOrEqual(const Key& key,
@@ -262,13 +264,22 @@ SkipList<Key, Comparator>::FindGreaterOrEqual(const Key& key,
   Node* x = head_;
   int level = GetMaxHeight() - 1;
   while (true) {
+    // next指向的是x同层的下一个节点，可能为空
     Node* next = x->Next(level);
+    // 如果key在next的后面，x指针指向next
     if (KeyIsAfterNode(key, next)) {
       // Keep searching in this list
       x = next;
     } else {
+      // 如果next为空或key在next的前面，
+      // 说明要插入的key是要比当前层的next节点小的即（head——>next，而key<next，所以放head与next中间）
+      // 此时要把当前prev[level]存上head，即找到当前层中比key小的点
+      // 即prev[level]中存的是各个层中比key小的点
       if (prev != nullptr) prev[level] = x;
       if (level == 0) {
+        // 层数为0的话，说明两个节点之间没有挑过其他节点，
+        // 而此时next是大于或等于key的，key肯定是大于next的前一个节点的（不大于的话走不到next节点）
+        // 返回的next节点只能大于或等于key节点
         return next;
       } else {
         // Switch to next list
@@ -336,12 +347,15 @@ void SkipList<Key, Comparator>::Insert(const Key& key) {
   // TODO(opt): We can use a barrier-free variant of FindGreaterOrEqual()
   // here since Insert() is externally synchronized.
   Node* prev[kMaxHeight];
+  // 在prev数组中找到不小于key的数  根据函数，这里传入指针的指针，即直接将prev[kMaxHeight]的值修改掉
   Node* x = FindGreaterOrEqual(key, prev);
 
   // Our data structure does not allow duplicate insertion
   assert(x == nullptr || !Equal(key, x->key));
 
   int height = RandomHeight();
+  // 如果当前随机到的高度比list中最大值要大（比如例子中本来只有4层，而我们插入30时随机到了5）
+  // 那么将多出来的层中的prev[]指向头结点
   if (height > GetMaxHeight()) {
     for (int i = GetMaxHeight(); i < height; i++) {
       prev[i] = head_;
@@ -360,6 +374,8 @@ void SkipList<Key, Comparator>::Insert(const Key& key) {
   for (int i = 0; i < height; i++) {
     // NoBarrier_SetNext() suffices since we will add a barrier when
     // we publish a pointer to "x" in prev[i].
+    // 在i层中的当前x节点所指向的下一个节点为（prev[i]的下一个节点）
+    // ——  即将x插入到prev[i]  与 next_prev[i]之间
     x->NoBarrier_SetNext(i, prev[i]->NoBarrier_Next(i));
     prev[i]->SetNext(i, x);
   }

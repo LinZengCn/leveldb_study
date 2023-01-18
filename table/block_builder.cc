@@ -69,20 +69,25 @@ Slice BlockBuilder::Finish() {
 }
 
 void BlockBuilder::Add(const Slice& key, const Slice& value) {
+  // 表示上一个key
   Slice last_key_piece(last_key_);
   assert(!finished_);
+  // block_restart_interval 控制重启点之间的距离
   assert(counter_ <= options_->block_restart_interval);
+  // 这里check一下，没有数据 或者 有数据并且当前的key比上一次的key大，因为有序
   assert(buffer_.empty()  // No values yet?
          || options_->comparator->Compare(key, last_key_piece) > 0);
   size_t shared = 0;
   if (counter_ < options_->block_restart_interval) {
     // See how much sharing to do with previous string
+    // 计算和前一个key共享的部分
     const size_t min_length = std::min(last_key_piece.size(), key.size());
     while ((shared < min_length) && (last_key_piece[shared] == key[shared])) {
       shared++;
     }
   } else {
     // Restart compression
+    // 记录重启点
     restarts_.push_back(buffer_.size());
     counter_ = 0;
   }

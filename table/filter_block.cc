@@ -5,6 +5,7 @@
 #include "table/filter_block.h"
 
 #include "leveldb/filter_policy.h"
+
 #include "util/coding.h"
 
 namespace leveldb {
@@ -59,6 +60,8 @@ void FilterBlockBuilder::GenerateFilter() {
   // Make list of keys from flattened key structure
   start_.push_back(keys_.size());  // Simplify length computation
   tmp_keys_.resize(num_keys);
+
+  // 得到本轮的所有的keys，放入tmp_keys_数组
   for (size_t i = 0; i < num_keys; i++) {
     const char* base = keys_.data() + start_[i];
     size_t length = start_[i + 1] - start_[i];
@@ -66,7 +69,9 @@ void FilterBlockBuilder::GenerateFilter() {
   }
 
   // Generate filter for current set of keys and append to result_.
+  // 先记录上一轮位图截止位置，防止位图的边界混淆
   filter_offsets_.push_back(result_.size());
+  // 将本轮keys计算得来的位图追加到result_字符串
   policy_->CreateFilter(&tmp_keys_[0], static_cast<int>(num_keys), &result_);
 
   tmp_keys_.clear();

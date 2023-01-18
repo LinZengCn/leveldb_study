@@ -10,6 +10,7 @@
 #include "leveldb/env.h"
 #include "leveldb/filter_policy.h"
 #include "leveldb/options.h"
+
 #include "table/block_builder.h"
 #include "table/filter_block.h"
 #include "table/format.h"
@@ -95,28 +96,37 @@ void TableBuilder::Add(const Slice& key, const Slice& value) {
   Rep* r = rep_;
   assert(!r->closed);
   if (!ok()) return;
+  // 因为key是有序的，需要按序add
   if (r->num_entries > 0) {
     assert(r->options.comparator->Compare(key, Slice(r->last_key)) > 0);
   }
-
+  // 写index_block
+  // pending_index_entry 用来判定是不是data block的第一个key,
+  // 表示上一个data block刷新到磁盘，才会写入一个index
+  // key: 分隔key value: 上一个data
+  // block的(offset, size)
   if (r->pending_index_entry) {
     assert(r->data_block.empty());
+    // 找到比上一个datablock的last_key大，但是比这个datablock所有key小的一个来当index,
+    // 也就是寻找距离last_key最短的key，一般是第一个不同的字符+1
     r->options.comparator->FindShortestSeparator(&r->last_key, key);
     std::string handle_encoding;
+    // 作为index部分
     r->pending_handle.EncodeTo(&handle_encoding);
     r->index_block.Add(r->last_key, Slice(handle_encoding));
     r->pending_index_entry = false;
   }
-
+  // 写filter_block (meta block)
   if (r->filter_block != nullptr) {
     r->filter_block->AddKey(key);
   }
 
   r->last_key.assign(key.data(), key.size());
   r->num_entries++;
-  r->data_block.Add(key, value);
+  r->data_block.Add(key, value);  // 将key写入data block中
 
   const size_t estimated_block_size = r->data_block.CurrentSizeEstimate();
+  // 如果超过了block的阈值，就要开启新的block
   if (estimated_block_size >= r->options.block_size) {
     Flush();
   }
@@ -131,8 +141,9 @@ void TableBuilder::Flush() {
   WriteBlock(&r->data_block, &r->pending_handle);
   if (ok()) {
     r->pending_index_entry = true;
-    r->status = r->file->Flush();
+    r->status = r->file->Flush();  // 刷盘
   }
+  // 每落一个data_block 才会写一个filter_block
   if (r->filter_block != nullptr) {
     r->filter_block->StartBlock(r->offset);
   }

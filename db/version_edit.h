@@ -19,11 +19,11 @@ struct FileMetaData {
   FileMetaData() : refs(0), allowed_seeks(1 << 30), file_size(0) {}
 
   int refs;
-  int allowed_seeks;  // Seeks allowed until compaction
-  uint64_t number;
+  int allowed_seeks;  // Seeks allowed until compaction 用于基于seek compaction
+  uint64_t number;  // 这个number用来唯一标识一个sstable，还记得文件命名中的编号吗？
   uint64_t file_size;    // File size in bytes
-  InternalKey smallest;  // Smallest internal key served by table
-  InternalKey largest;   // Largest internal key served by table
+  InternalKey smallest;  // Smallest internal key served by table 最小key
+  InternalKey largest;   // Largest internal key served by table 最大key
 };
 
 class VersionEdit {

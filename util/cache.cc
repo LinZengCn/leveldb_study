@@ -40,18 +40,20 @@ namespace {
 
 // An entry is a variable length heap-allocated structure.  Entries
 // are kept in a circular doubly linked list ordered by access time.
+// 这样看起来key很少变化？但是value经常变化？还是应为key经常需要查询，所以需要内存区域连续来利用局部性原理
+// 就是一个Node
 struct LRUHandle {
-  void* value;
-  void (*deleter)(const Slice&, void* value);
-  LRUHandle* next_hash;
-  LRUHandle* next;
-  LRUHandle* prev;
-  size_t charge;  // TODO(opt): Only allow uint32_t?
-  size_t key_length;
+  void* value; // 具体的值，指针类型
+  void (*deleter)(const Slice&, void* value); // 自定义回收节点的回调函数
+  LRUHandle* next_hash; // 用于hashtable冲突时， 下一个节点
+  LRUHandle* next; // 代表lru中双向链表中下一个节点
+  LRUHandle* prev; // 代表lru中双向链表中上一个节点
+  size_t charge;  // TODO(opt): Only allow uint32_t? 记录当前value所占用的内存大小，用于超出容量后进行lru
+  size_t key_length; //数据key的长度
   bool in_cache;     // Whether entry is in the cache.
-  uint32_t refs;     // References, including cache reference, if present.
-  uint32_t hash;     // Hash of key(); used for fast sharding and comparisons
-  char key_data[1];  // Beginning of key
+  uint32_t refs;     // References, including cache reference, if present. 引用计数，当前节点可能被多个组件使用
+  uint32_t hash;     // Hash of key(); used for fast sharding and comparisons 记录当前key的hash值
+  char key_data[1];  // Beginning of key 使用长度为1的数组是为了内存连续
 
   Slice key() const {
     // next is only equal to this if the LRU handle is the list head of an
@@ -67,6 +69,7 @@ struct LRUHandle {
 // table implementations in some of the compiler/runtime combinations
 // we have tested.  E.g., readrandom speeds up by ~5% over the g++
 // 4.4.3's builtin hashtable.
+// 就是一个自己实现的hash table
 class HandleTable {
  public:
   HandleTable() : length_(0), elems_(0), list_(nullptr) { Resize(); }
@@ -78,12 +81,15 @@ class HandleTable {
 
   LRUHandle* Insert(LRUHandle* h) {
     LRUHandle** ptr = FindPointer(h->key(), h->hash);
-    LRUHandle* old = *ptr;
-    h->next_hash = (old == nullptr ? nullptr : old->next_hash);
+    LRUHandle* old = *ptr; // 老的元素返回，LRUCache会将相同key的老元素释放，详情看LRUCache的Insert函数。
+    h->next_hash = (old == nullptr ? nullptr : old->next_hash); // 使用的是尾插法，仔细看findpointer
     *ptr = h;
-    if (old == nullptr) {
+    if (old == nullptr) { // 指的是原来没有对应的key/hash
       ++elems_;
       if (elems_ > length_) {
+        // 当整个hash表中元素的个数超过 hash表桶的的个数的时候，调用Resize函数，该函数会将桶的个数增加一倍
+        // 同时将现有的元素搬迁到合适的桶的后面。正是这种提早扩大桶的个数，良好的hash函数会保证每个桶对应的链表中尽可能的只有1个元素
+        // 从这个角度讲，LevelDB使用这种优化后的哈希表，查找的效率为O（1）。
         // Since each cache entry is fairly large, we aim for a small
         // average linked list length (<= 1).
         Resize();
@@ -105,9 +111,9 @@ class HandleTable {
  private:
   // The table consists of an array of buckets where each bucket is
   // a linked list of cache entries that hash into the bucket.
-  uint32_t length_;
-  uint32_t elems_;
-  LRUHandle** list_;
+  uint32_t length_; // 当前hash桶的个数
+  uint32_t elems_;  // 在整个hash表中一共存放了多少个元素
+  LRUHandle** list_; // 二维指针，每一个指向一个桶的表头位置
 
   // Return a pointer to slot that points to a cache entry that
   // matches key/hash.  If there is no such cache entry, return a
@@ -122,6 +128,7 @@ class HandleTable {
 
   void Resize() {
     uint32_t new_length = 4;
+    // 按照2的倍数对齐
     while (new_length < elems_) {
       new_length *= 2;
     }
@@ -134,6 +141,7 @@ class HandleTable {
         LRUHandle* next = h->next_hash;
         uint32_t hash = h->hash;
         LRUHandle** ptr = &new_list[hash & (new_length - 1)];
+        // 使用尾插法
         h->next_hash = *ptr;
         *ptr = h;
         h = next;
@@ -186,12 +194,13 @@ class LRUCache {
   // Dummy head of LRU list.
   // lru.prev is newest entry, lru.next is oldest entry.
   // Entries have refs==1 and in_cache==true.
-  LRUHandle lru_ GUARDED_BY(mutex_);
+  LRUHandle lru_ GUARDED_BY(mutex_); // 冷链表
 
   // Dummy head of in-use list.
   // Entries are in use by clients, and have refs >= 2 and in_cache==true.
-  LRUHandle in_use_ GUARDED_BY(mutex_);
+  LRUHandle in_use_ GUARDED_BY(mutex_); // 热链表
 
+  // 用于快速获取某个节点，为了记录key和节点的映射关系，通过key可以快速定位到某个节点，是一个hash表
   HandleTable table_ GUARDED_BY(mutex_);
 };
 
@@ -243,6 +252,7 @@ void LRUCache::LRU_Remove(LRUHandle* e) {
 }
 
 void LRUCache::LRU_Append(LRUHandle* list, LRUHandle* e) {
+  // 因为是双链表，所以看起来插入比较奇怪，不过确实是这样的
   // Make "e" newest entry by inserting just before *list
   e->next = list;
   e->prev = list->prev;
@@ -268,8 +278,9 @@ Cache::Handle* LRUCache::Insert(const Slice& key, uint32_t hash, void* value,
                                 size_t charge,
                                 void (*deleter)(const Slice& key,
                                                 void* value)) {
+  // 需要加锁
   MutexLock l(&mutex_);
-
+  // 创建节点对象
   LRUHandle* e =
       reinterpret_cast<LRUHandle*>(malloc(sizeof(LRUHandle) - 1 + key.size()));
   e->value = value;
@@ -278,20 +289,26 @@ Cache::Handle* LRUCache::Insert(const Slice& key, uint32_t hash, void* value,
   e->key_length = key.size();
   e->hash = hash;
   e->in_cache = false;
+  // 这里为1，主要是因为该节点会返回给调用者
   e->refs = 1;  // for the returned handle.
   std::memcpy(e->key_data, key.data(), key.size());
-
+  // 容量大于0， 所以开启缓存模式
   if (capacity_ > 0) {
+    // 这里加1 主要是该节点会放入缓存中
     e->refs++;  // for the cache's reference.
     e->in_cache = true;
+    // 因为该节点会在外面使用，所以节点应该放在in_use上
     LRU_Append(&in_use_, e);
+    // 增加新增的字节数
     usage_ += charge;
+    // 如果已经存在这个节点，需要将老的节点释放掉，因为hashtable的insert操作隐含了更新的操作。
     FinishErase(table_.Insert(e));
   } else {  // don't cache. (capacity_==0 is supported and turns off caching.)
     // next is read by key() in an assert, so it must be initialized
     e->next = nullptr;
   }
   while (usage_ > capacity_ && lru_.next != &lru_) {
+    // 如果容量超过了设计的容量，并且冷链表中有内容，则从冷链表中删除元素。
     LRUHandle* old = lru_.next;
     assert(old->refs == 1);
     bool erased = FinishErase(table_.Remove(old->key(), old->hash));
@@ -336,6 +353,7 @@ void LRUCache::Prune() {
 static const int kNumShardBits = 4;
 static const int kNumShards = 1 << kNumShardBits;
 
+// 一个ShardedLRUCache里面有多个LRUCache，按hash值分配具体的LRUCache，为了减少竞争，提升效率
 class ShardedLRUCache : public Cache {
  private:
   LRUCache shard_[kNumShards];
